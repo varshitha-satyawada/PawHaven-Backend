@@ -2,15 +2,15 @@ package com.pawhaven.config;
 
 import com.pawhaven.security.JwtAuthenticationFilter;
 
+import java.util.List;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,58 +21,74 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import java.util.List;
-
 @Configuration
-@EnableMethodSecurity
+@EnableWebSecurity
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter jwtFilter;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtFilter) {
-        this.jwtFilter = jwtFilter;
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
     }
 
-    // Spring Security configuration
+    // Password encoder
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    // Authentication manager
+    @Bean
+    public AuthenticationManager authenticationManager(
+            AuthenticationConfiguration configuration) throws Exception {
+
+        return configuration.getAuthenticationManager();
+    }
+
+    // Security configuration
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http)
             throws Exception {
 
-        return http
-                // Disable CSRF because this application uses JWT authentication
-                .csrf(csrf -> csrf.disable())
+        http
+            // Disable CSRF for the stateless REST API
+            .csrf(csrf -> csrf.disable())
 
-                // Enable CORS
-                .cors(Customizer.withDefaults())
+            // Enable CORS
+            .cors(cors -> cors.configurationSource(
+                    corsConfigurationSource()))
 
-                // Use stateless authentication
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // Use JWT authentication without HTTP sessions
+            .sessionManagement(session -> session
+                    .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-                // Configure endpoint permissions
-                .authorizeHttpRequests(auth -> auth
+            // Configure public and protected endpoints
+            .authorizeHttpRequests(auth -> auth
 
-                        // Registration and login are public
-                        .requestMatchers("/api/auth/**", "/error").permitAll()
+                    // Allow CORS preflight requests
+                    .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // Anyone can view pet listings
-                        .requestMatchers(
-                                HttpMethod.GET,
-                                "/api/pets",
-                                "/api/pets/**"
-                        ).permitAll()
+                    // Allow authentication endpoints
+                    .requestMatchers("/api/auth/**").permitAll()
 
-                        // Other endpoints require authentication
-                        .anyRequest().authenticated()
-                )
+                    // Allow error handling
+                    .requestMatchers("/error").permitAll()
 
-                // Add JWT authentication filter
-                .addFilterBefore(
-                        jwtFilter,
-                        UsernamePasswordAuthenticationFilter.class
-                )
+                    // Allow everyone to view available pets
+                    .requestMatchers(HttpMethod.GET, "/api/pets").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/pets/**").permitAll()
 
-                .build();
+                    // Require authentication for all other endpoints
+                    .anyRequest().authenticated()
+            )
+
+            // Add JWT filter before the username/password filter
+            .addFilterBefore(
+                    jwtAuthenticationFilter,
+                    UsernamePasswordAuthenticationFilter.class
+            );
+
+        return http.build();
     }
 
     // CORS configuration
@@ -82,13 +98,14 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
 
         // Allowed frontend addresses
-         config.setAllowedOrigins(List.of(
-             "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:5174",
-             "http://127.0.0.1:5174",
-             "https://paw-haven-pet-adoption-management-system-a6nl4emzz.vercel.app"
-));
+        config.setAllowedOrigins(List.of(
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:5174",
+                "http://127.0.0.1:5174",
+                "https://paw-haven-pet-adoption-management-system-a6nl4emzz.vercel.app"
+        ));
+
         // Allowed HTTP methods
         config.setAllowedMethods(List.of(
                 "GET",
@@ -106,8 +123,7 @@ public class SecurityConfig {
                 "Accept"
         ));
 
-        // JWT is sent through the Authorization header,
-        // so cross-origin cookies are not required.
+        // JWT uses the Authorization header, not cross-origin cookies
         config.setAllowCredentials(false);
 
         // Cache preflight responses for one hour
@@ -119,19 +135,5 @@ public class SecurityConfig {
         source.registerCorsConfiguration("/**", config);
 
         return source;
-    }
-
-    // Password encryption
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
-    // Authentication manager
-    @Bean
-    public AuthenticationManager authenticationManager(
-            AuthenticationConfiguration config) throws Exception {
-
-        return config.getAuthenticationManager();
     }
 }
